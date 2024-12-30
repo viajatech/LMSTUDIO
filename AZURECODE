@@ -1,0 +1,217 @@
+#Version Azure Speech SDK by David Ruiz (@viajatech) 
+#by David Ruiz (@viajatech)
+
+#Si utilizas mi script recuerda dar créditos (Apache 2.0) 
+#Se agradece tu estrellita en el repo de github
+#https://github.com/viajatech
+
+#Esta Edición Azure Speech by Viaja Tech tiene dos secciones; la primera es la de la configuración del chatbot, para activar salida de voz y elegir voz femenina/masculina y la segunda es el Chat.
+
+
+#Consideraciones:
+
+#Requisitos Previos:
+#Debes crear una cuenta en Azure y obtener la clave API y región de servicio.
+#Reemplaza "TU_CLAVE_DE_AZURE" y "TU_REGIÓN_DE_SERVICIO" con tus credenciales.
+#Opciones de Voz:
+
+#Voz Femenina: "es-ES-ElviraNeural"
+#Voz Masculina: "es-ES-AlvaroNeural"
+#Listado de voces; https://learn.microsoft.com/es-es/azure/ai-services/speech-service/language-support?tabs=stt#text-to-speech
+
+
+#pip install azure-cognitiveservices-speech
+#pip install openai gradio speechrecognition azure-cognitiveservices-speech
+
+#Ejecuta el Script:
+#Guarda el código en un archivo superbot.py y ejecuta: python superbot.py
+
+#Alternativa Gratuita con TTS de Coqui AI:
+
+#Si prefieres una solución gratuita sin depender de servicios en la nube, puedes utilizar la librería TTS de Coqui AI. Sin embargo, su configuración es más compleja y puede requerir recursos adicionales.
+
+#Ejemplo con TTS de Coqui AI:
+
+#pip install TTS
+#Luego, puedes utilizar modelos pre-entrenados para español.
+
+import gradio as gr
+from openai import OpenAI
+import speech_recognition as sr
+import azure.cognitiveservices.speech as speechsdk
+
+# Configuración de la conexión a LLM STUDIO
+client = OpenAI(base_url="http://localhost:1234/v1", api_key="lm-studio")
+
+# Configuración de Azure Speech
+speech_key = "TU_CLAVE_DE_AZURE"  # Reemplaza con tu clave de Azure
+service_region = "TU_REGIÓN_DE_SERVICIO"  # Ejemplo: "eastus"
+
+def speak_text_azure(text, voice_gender):
+    """Utiliza Azure Speech para convertir texto a voz con la voz seleccionada."""
+    speech_config = speechsdk.SpeechConfig(subscription=speech_key, region=service_region)
+    # Seleccionar la voz según el género
+    if voice_gender == "Femenina":
+        speech_config.speech_synthesis_voice_name = "es-ES-ElviraNeural"
+    else:
+        speech_config.speech_synthesis_voice_name = "es-ES-AlvaroNeural"
+    audio_config = speechsdk.audio.AudioOutputConfig(use_default_speaker=True)
+    synthesizer = speechsdk.SpeechSynthesizer(speech_config=speech_config, audio_config=audio_config)
+    synthesizer.speak_text_async(text)
+
+def transcribe_audio():
+    """Transcribe el audio recibido del micrófono."""
+    recognizer = sr.Recognizer()
+    with sr.Microphone() as source:
+        print("Escuchando...")
+        audio = recognizer.listen(source)
+    try:
+        text = recognizer.recognize_google(audio, language='es-ES')
+        return text
+    except sr.UnknownValueError:
+        return "No pude entender el audio."
+    except sr.RequestError as e:
+        return f"Error al conectar con el servicio de reconocimiento de voz: {e}"
+
+def start_chatbot(context, user, bot, temperature, model, voice_gender):
+    """Inicia el chatbot con el contexto inicial y configura los estados."""
+    messages = [
+        {"role": "system", "content": context},
+        {"role": "assistant", "content": f"Hola {user}, soy {bot}. ¿En qué puedo ayudarte hoy?"}
+    ]
+    chat_history = [{"role": "assistant", "content": messages[-1]['content']}]
+
+    return chat_history, messages, user, bot, temperature, model, voice_gender, gr.update(interactive=True)
+
+def chatbot(user_message, messages, user_name, bot_name, temperature, model):
+    """Obtiene la respuesta del chatbot utilizando la API de OpenAI."""
+    messages.append({"role": "user", "content": f"{user_name}: {user_message}"})
+    try:
+        completion = client.chat.completions.create(
+            model=model,
+            messages=messages,
+            temperature=temperature,
+        )
+        response_message = completion.choices[0].message.content.strip()
+    except Exception as e:
+        response_message = f"Lo siento, ocurrió un error: {str(e)}"
+
+    messages.append({"role": "assistant", "content": response_message})
+    return response_message, messages
+
+def send_message(user_message, chat_history, messages, user_name, bot_name, temperature, model, use_voice, voice_gender):
+    """Maneja el envío de mensajes y actualiza el historial del chat."""
+    if messages is None:
+        return "Por favor, haz clic en 'Iniciar Chatbot' antes de enviar mensajes.", chat_history, messages
+    bot_response, messages = chatbot(user_message, messages, user_name, bot_name, temperature, model)
+    chat_history.append({"role": "user", "content": f"{user_name}: {user_message}"})
+    chat_history.append({"role": "assistant", "content": f"{bot_name}: {bot_response}"})
+    if use_voice:
+        speak_text_azure(bot_response, voice_gender)
+    return "", chat_history, messages
+
+def clear_history():
+    """Limpia el historial del chat y los estados."""
+    return [], [], "", "", 0.5, "meta-llama-3.1-8b-instruct", "Femenina", gr.update(interactive=False)
+
+# Interfaz de Gradio
+with gr.Blocks(theme=gr.themes.Soft()) as demo:
+    gr.Markdown("<h1 style='color: purple;'>SuperBot by ViajaTech</h1>")
+
+    with gr.Tab("Configuración"):
+        with gr.Row():
+            context = gr.Textbox(
+                label="Contexto o historia inicial",
+                lines=3,
+                value="Eres Isabella, la A.I asistente creada por David. Deberás ayudar a los usuarios en todas sus dudas.",
+            )
+        with gr.Row():
+            user_input = gr.Textbox(label="Tu nombre", value="Usuario")
+            bot_input = gr.Textbox(label="Nombre del chatbot", value="Isabella")
+        with gr.Row():
+            temperature = gr.Slider(
+                label="Temperatura (creatividad de las respuestas)",
+                minimum=0.0,
+                maximum=1.0,
+                value=0.5,
+                step=0.1,
+            )
+            model = gr.Textbox(
+                label="Modelo de lenguaje a utilizar",
+                value="meta-llama-3.1-8b-instruct",
+            )
+        with gr.Row():
+            use_voice = gr.Checkbox(label="Activar salida de voz", value=False)
+            voice_gender = gr.Radio(
+                label="Selecciona la voz del chatbot",
+                choices=["Femenina", "Masculina"],
+                value="Femenina"
+            )
+        start_button = gr.Button("Iniciar Chatbot")
+
+    with gr.Tab("Chat"):
+        chat_history = gr.Chatbot(type="messages")
+        with gr.Row():
+            message_input = gr.Textbox(label="Escribe tu mensaje...")
+            send_button = gr.Button("Enviar", interactive=False)
+        voice_input_button = gr.Button("Hablar")
+        clear_button = gr.Button("Borrar historial")
+
+    # Estados
+    state_messages = gr.State()
+    state_user_name = gr.State()
+    state_bot_name = gr.State()
+    state_temperature = gr.State()
+    state_model = gr.State()
+    state_voice_gender = gr.State()
+
+    # Acciones de los botones
+    start_button.click(
+        start_chatbot,
+        inputs=[context, user_input, bot_input, temperature, model, voice_gender],
+        outputs=[
+            chat_history,
+            state_messages,
+            state_user_name,
+            state_bot_name,
+            state_temperature,
+            state_model,
+            state_voice_gender,
+            send_button,  # Habilitar el botón de enviar
+        ],
+    )
+    send_button.click(
+        send_message,
+        inputs=[
+            message_input,
+            chat_history,
+            state_messages,
+            state_user_name,
+            state_bot_name,
+            state_temperature,
+            state_model,
+            use_voice,
+            state_voice_gender,
+        ],
+        outputs=[message_input, chat_history, state_messages],
+    )
+    voice_input_button.click(
+        transcribe_audio,
+        inputs=None,
+        outputs=message_input,
+    )
+    clear_button.click(
+        clear_history,
+        outputs=[
+            chat_history,
+            state_messages,
+            state_user_name,
+            state_bot_name,
+            state_temperature,
+            state_model,
+            state_voice_gender,
+            send_button,  # Deshabilitar el botón de enviar
+        ],
+    )
+
+    demo.launch(share=True)
