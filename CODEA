@@ -1,0 +1,146 @@
+#by David Ruiz (@viajatech)
+
+#Si utilizas mi script recuerda dar créditos (Apache 2.0) 
+#Se agradece tu estrellita en el repo de github
+#https://github.com/viajatech
+
+#GUI2
+#Ésta versión de chat morado, tiene dos secciones; a) la primera es para configurar el chatbot y darle click en iniciar el chatbot para que se encienda b)La segunda sección es la interacción con el chatbot 
+#Esta versión no incluye voz, es el modelo base (si quieres que el chatbot utilice voz, usa la versión que hice con Azure) 
+
+#pip install openai
+#pip install gradio
+
+
+# superbot.py
+
+import gradio as gr
+from openai import OpenAI
+
+# Configuración de la conexión a LLM STUDIO
+client = OpenAI(base_url="http://localhost:1234/v1", api_key="lm-studio")
+
+def start_chatbot(context, user, bot, temperature, model):
+    """Inicia el chatbot con el contexto inicial y configura los estados."""
+    messages = [
+        {"role": "system", "content": context},
+        {"role": "assistant", "content": f"Hola {user}, soy {bot}. ¿En qué puedo ayudarte hoy?"}
+    ]
+    chat_history = [{"role": "assistant", "content": messages[-1]['content']}]
+
+    return chat_history, messages, user, bot, temperature, model, gr.update(interactive=True)
+
+def chatbot(user_message, messages, user_name, bot_name, temperature, model):
+    """Obtiene la respuesta del chatbot utilizando la API de OpenAI."""
+    messages.append({"role": "user", "content": f"{user_name}: {user_message}"})
+    try:
+        completion = client.chat.completions.create(
+            model=model,
+            messages=messages,
+            temperature=temperature,
+        )
+        response_message = completion.choices[0].message.content.strip()
+    except Exception as e:
+        response_message = f"Lo siento, ocurrió un error: {str(e)}"
+
+    messages.append({"role": "assistant", "content": response_message})
+    return response_message, messages
+
+def send_message(user_message, chat_history, messages, user_name, bot_name, temperature, model):
+    """Maneja el envío de mensajes y actualiza el historial del chat."""
+    if messages is None:
+        return "Por favor, haz clic en 'Iniciar Chatbot' antes de enviar mensajes.", chat_history, messages
+    bot_response, messages = chatbot(user_message, messages, user_name, bot_name, temperature, model)
+    chat_history.append({"role": "user", "content": f"{user_name}: {user_message}"})
+    chat_history.append({"role": "assistant", "content": f"{bot_name}: {bot_response}"})
+    return "", chat_history, messages
+
+def clear_history():
+    """Limpia el historial del chat y los estados."""
+    return [], [], "", "", 0.5, "meta-llama-3.1-8b-instruct", gr.update(interactive=False)
+
+# Interfaz de Gradio
+with gr.Blocks(theme=gr.themes.Soft()) as demo:
+    gr.Markdown("<h1 style='color: purple;'>SuperBot by ViajaTech</h1>")
+
+    with gr.Tab("Configuración"):
+        with gr.Row():
+            context = gr.Textbox(
+                label="Contexto o historia inicial",
+                lines=3,
+                value="Eres Isabella, la A.I asistente creada por David. Deberás ayudar a los usuarios en todas sus dudas.",
+            )
+        with gr.Row():
+            user_input = gr.Textbox(label="Tu nombre", value="Usuario")
+            bot_input = gr.Textbox(label="Nombre del chatbot", value="Isabella")
+        with gr.Row():
+            temperature = gr.Slider(
+                label="Temperatura (creatividad de las respuestas)",
+                minimum=0.0,
+                maximum=1.0,
+                value=0.5,
+                step=0.1,
+            )
+            model = gr.Textbox(
+                label="Modelo de lenguaje a utilizar",
+                value="meta-llama-3.1-8b-instruct",
+            )
+        start_button = gr.Button("Iniciar Chatbot")
+
+    with gr.Tab("Chat"):
+        chat_history = gr.Chatbot(type="messages")
+        with gr.Row():
+            message_input = gr.Textbox(label="Escribe tu mensaje...")
+            send_button = gr.Button("Enviar", interactive=False)
+        clear_button = gr.Button("Borrar historial")
+
+    # Estados
+    state_messages = gr.State()
+    state_user_name = gr.State()
+    state_bot_name = gr.State()
+    state_temperature = gr.State()
+    state_model = gr.State()
+
+    # Acciones de los botones
+    start_button.click(
+        start_chatbot,
+        inputs=[context, user_input, bot_input, temperature, model],
+        outputs=[
+            chat_history,
+            state_messages,
+            state_user_name,
+            state_bot_name,
+            state_temperature,
+            state_model,
+            send_button,  # Habilitar el botón de enviar
+        ],
+    )
+
+    send_button.click(
+        send_message,
+        inputs=[
+            message_input,
+            chat_history,
+            state_messages,
+            state_user_name,
+            state_bot_name,
+            state_temperature,
+            state_model,
+        ],
+        outputs=[message_input, chat_history, state_messages],
+    )
+
+    clear_button.click(
+        clear_history,
+        outputs=[
+            chat_history,
+            state_messages,
+            state_user_name,
+            state_bot_name,
+            state_temperature,
+            state_model,
+            send_button,  # Deshabilitar el botón de enviar
+        ],
+    )
+
+    demo.launch(share=True)
